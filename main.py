@@ -17,10 +17,12 @@ from dataclasses import dataclass
 
 
 def print_mac(mac: str) -> str:
+    """Format a MAC address from binary to hexadecimal representation."""
     return ":".join(f"{int(mac[i:i+8], 2):02x}" for i in range(0, len(mac), 8))
 
 
 def format_ip(ip: str) -> str:
+    """Format an IP address from binary to dotted decimal representation."""
     return ".".join(str(int(ip[i:i + 8], 2)) for i in range(0, 32, 8))
 
 
@@ -107,6 +109,8 @@ def parse(filename: str) -> list[str]:
 
 
 def ethernet_decapsulation(frame: str) -> Frame:
+    """Process a raw Ethernet frame and extract the header and data."""
+
     if len(frame) < 14 * 8: 
         raise ValueError("Frame is too short to hold an Ethernet header.")
 
@@ -127,10 +131,14 @@ def ethernet_decapsulation(frame: str) -> Frame:
 
 
 def packet_decapsulation(frame: Frame) -> Packet:
+    """Process an Ethernet frame and extract the IPv4 packet header and data."""
+
     return Packet() # TODO create packet and trim data to total length
 
 
 def segment_decapsulation(packet: Packet) -> Segment:
+    """Process an IPv4 packet and extract the TCP segment header and data."""
+
     return Segment() # TODO create segment
 
 
