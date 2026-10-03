@@ -9,6 +9,7 @@ Sources:
     - RFC 791, Internet Protocol
     - RFC 9293, Transmission Control Protocol
     - RFC 1071, Computing the Internet Checksum
+    - IEEE 802.3 Standard
     - Wireshark
 """
 
