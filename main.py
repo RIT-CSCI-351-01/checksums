@@ -16,89 +16,120 @@ import sys
 from dataclasses import dataclass
 
 
-def print_mac(mac: str) -> str:
-    """Format a MAC address from binary to hexadecimal representation."""
-    return ":".join(f"{int(mac[i:i+8], 2):02x}" for i in range(0, len(mac), 8))
+def print_mac(mac: bytes) -> str:
+    """Format a MAC address from raw bytes to hexadecimal representation."""
+    return ":".join(f"{b:02x}" for b in mac)
 
 
-def format_ip(ip: str) -> str:
-    """Format an IP address from binary to dotted decimal representation."""
-    return ".".join(str(int(ip[i:i + 8], 2)) for i in range(0, 32, 8))
+def format_ip(ip: bytes) -> str:
+    """Format an IP address from raw bytes to dotted decimal representation."""
+    return ".".join(str(b) for b in ip)
 
+
+ETH_TYPES = {
+    0x0800: "IPv4",
+    0x0806: "ARP",
+    0x8100: "VLAN",
+    0x86DD: "IPv6",
+}
 
 @dataclass
-class Frame:
-    dest_mac: str = ""          # 6 bytes
-    source_mac: str = ""        # 6 bytes
-    eth_type: str = ""          # 2 bytes
-    data: str = ""              # 46-1500 bytes (may or may not be padded)
+class FrameII:
+    dest_mac: bytes = bytes(6)       # 6 bytes
+    source_mac: bytes = bytes(6)     # 6 bytes
+    eth_type: bytes = bytes(2)       # 2 bytes
+    data: bytes = b""                # 46-1500 bytes
 
     def __str__(self) -> str:
+        """Return a string representation of the Ethernet II frame."""
+        eth_type = int.from_bytes(self.eth_type, "big")
         return (
             f"Ethernet II: Dst: {print_mac(self.dest_mac)}, "
             f"Src: {print_mac(self.source_mac)}, "
-            f"Type: 0x{int(self.eth_type, 2):04x}"
+            f"Type: {ETH_TYPES.get(eth_type, "Unknown")} (0x{eth_type:04x})"
         )
 
+@dataclass
+class FrameIEEE:
+    dest_mac: bytes = bytes(6)       # 6 bytes
+    source_mac: bytes = bytes(6)     # 6 bytes
+    length: int = 0                  # 2 bytes
+    llc_header: bytes = bytes(3)     # 3 bytes
+    data: bytes = b""                # 46-1500 bytes
+
+    def __str__(self) -> str:
+        """Return a string representation of the IEEE 802.3 frame."""
+        return (
+            f"IEEE 802.3: Dst: {print_mac(self.dest_mac)}, "
+            f"Src: {print_mac(self.source_mac)}, "
+            f"Length: {self.length} bytes"
+        )
 
 @dataclass
 class Packet:
-    version: str = ""           # 4 bits
-    ihl: str = ""               # 4 bits
-    tos: str = ""               # 8 bits
-    total_length: str = ""      # 16 bits
-    identification: str = ""    # 16 bits
-    flags: str = ""             # 3 bits
-    fragment_offset: str = ""   # 13 bits
-    ttl: str = ""               # 8 bits
-    protocol: str = ""          # 8 bits
-    header_checksum: str = ""   # 16 bits
-    source_ip: str = ""         # 32 bits
-    dest_ip: str = ""           # 32 bits
-    options: str = ""           # 0-40 bytes
-    data: str = ""              # variable length
+    version: int = 0            # 4 bits
+    ihl: int = 0                 # 4 bits
+    tos: int = 0                 # 8 bits
+    total_length: int = 0        # 16 bits
+    identification: int = 0      # 16 bits
+    flags: int = 0               # 3 bits
+    fragment_offset: int = 0     # 13 bits
+    ttl: int = 0                 # 8 bits
+    protocol: int = 0            # 8 bits
+    header_checksum: bytes = bytes(2)  # 2 bytes
+    source_ip: bytes = bytes(4)        # 4 bytes
+    dest_ip: bytes = bytes(4)          # 4 bytes
+    options: bytes = b""               # 0-40 bytes
+    data: bytes = b""                  # variable length
 
     def __str__(self) -> str:
+        """Return a string representation of the IPv4 packet."""
         return (
             f"IPv4: Src: {format_ip(self.source_ip)}, "
             f"Dst: {format_ip(self.dest_ip)}, "
-            f"Protocol: {int(self.protocol, 2)}"
+            f"Protocol: {self.protocol}"
         )
 
 
 @dataclass
 class Segment:
-    source_port: str = ""       # 16 bits
-    dest_port: str = ""         # 16 bits
-    sequence_number: str = ""   # 32 bits
-    ack_number: str = ""        # 32 bits
-    data_offset: str = ""       # 4 bits
-    reserved: str = ""          # 3 bits
-    flags: str = ""             # 9 bits
-    window_size: str = ""       # 16 bits
-    checksum: str = ""          # 16 bits
-    urgent_pointer: str = ""    # 16 bits
-    optional_data: str = ""     # 0-40 bytes
-    data: str = ""              # variable length
+    source_port: int = 0         # 16 bits
+    dest_port: int = 0           # 16 bits
+    sequence_number: int = 0     # 32 bits
+    ack_number: int = 0          # 32 bits
+    data_offset: int = 0         # 4 bits
+    reserved: int = 0            # 3 bits
+    flags: int = 0               # 9 bits
+    window_size: int = 0         # 16 bits
+    checksum: bytes = bytes(2)   # 2 bytes
+    urgent_pointer: int = 0      # 16 bits
+    optional_data: bytes = b""   # 0-40 bytes
+    data: bytes = b""            # variable length
 
     def __str__(self) -> str:
+        """Return a string representation of the TCP segment."""
         return (
-            f"TCP: Src Port: {int(self.source_port, 2)}, "
-            f"Dst Port: {int(self.dest_port, 2)}, "
-            f"Seq: {int(self.sequence_number, 2)}, "
-            f"Ack: {int(self.ack_number, 2)}"
+            f"TCP: Src Port: {self.source_port}, "
+            f"Dst Port: {self.dest_port}, "
+            f"Seq: {self.sequence_number}, "
+            f"Ack: {self.ack_number}"
         )
 
 
-def parse(filename: str) -> list[str]:
+def parse(filename: str) -> list[bytes]:
     try:
         with open(filename) as file:
             frames = []
             while (line := file.readline()) != "":
+                # Ignore non-data lines and seperators
                 if line.startswith("|"):
-                    frames.append("".join(
-                        f"{int(c.strip(), 16):08b}" for c in line.strip().split("|")[2:] if c.strip()
-                    ))
+                    # Convert the hex values in the line to bytes and append to frames
+                    hex_values = (
+                        int(c.strip(), 16)
+                        for c in line.strip().split("|")[2:]
+                        if c.strip()
+                    )
+                    frames.append(bytes(hex_values))
             return frames
     except OSError:
         print(f"Could not open file: {filename}")
@@ -108,32 +139,35 @@ def parse(filename: str) -> list[str]:
         sys.exit(1)
 
 
-def ethernet_decapsulation(frame: str) -> Frame:
+def ethernet_decapsulation(frame: bytes) -> FrameII | FrameIEEE:
     """Process a raw Ethernet frame and extract the header and data."""
 
-    if len(frame) < 14 * 8: 
+    if len(frame) < 14:
         raise ValueError("Frame is too short to hold an Ethernet header.")
 
-    dest_mac = frame[0:48]
-    source_mac = frame[48:96]
-    eth_type = frame[96:112]
-    data = frame[112:]
-    
-    if eth_type != f"{int('0800', 16):016b}":
-        raise ValueError("Frame type is not IPv4.")
+    # Determine whether we have an Ethernet II frame or an IEEE 802.3 frame
+    eth_type = int.from_bytes(frame[12:14], "big")
+    if eth_type < 0x0600:
+        return FrameIEEE(
+            dest_mac=frame[0:6],
+            source_mac=frame[6:12],
+            length=eth_type,
+            llc_header=frame[14:17],
+            data=frame[17:]
+        )
 
-    return Frame(
-        dest_mac=dest_mac,
-        source_mac=source_mac,
-        eth_type=eth_type,
-        data=data
-    )
+    return FrameII(
+        dest_mac=frame[0:6],
+        source_mac=frame[6:12],
+        eth_type=frame[12:14],
+        data=frame[14:]
+    ) 
 
 
-def packet_decapsulation(frame: Frame) -> Packet:
-    """Process an Ethernet frame and extract the IPv4 packet header and data."""
+def packet_decapsulation(data: bytes) -> Packet:
+    """Process the payload of a frame and extract the IPv4 packet header and data."""
 
-    return Packet() # TODO create packet and trim data to total length
+    return Packet() # TODO create packet
 
 
 def segment_decapsulation(packet: Packet) -> Segment:
@@ -148,15 +182,26 @@ def main(filename: str):
         print("No packets found.")
         return
 
+    # Process each frame and print the extracted information
     for index, raw in enumerate(frames):
-        print(f"Packet {index + 1}")
+        print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
         try:
             frame = ethernet_decapsulation(raw)
-            packet = packet_decapsulation(frame)
-            segment = segment_decapsulation(packet)
-            print(f"\n\t{frame}\n\t{packet}\n\t{segment}")
         except ValueError as e:
             print(f"\t{e}")
+            continue
+
+        print(f"\t{frame}")
+        if isinstance(frame, FrameIEEE) or frame.eth_type != b"\x08\x00":
+            continue
+
+        packet = packet_decapsulation(frame.data)
+        print(f"\t{packet}")
+        if packet.protocol != 6:
+            continue
+
+        segment = segment_decapsulation(packet)
+        print(f"\t{segment}")
 
 
 if __name__ == "__main__":
