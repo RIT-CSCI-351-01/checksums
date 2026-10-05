@@ -85,7 +85,7 @@ class Packet:
 
     def __str__(self) -> str:
         """Return a string representation of the IPv4 packet."""
-        return (
+        return ( 
             f"IPv4: Src: {format_ip(self.source_ip)}, "
             f"Dst: {format_ip(self.dest_ip)}, "
             f"Protocol: {self.protocol}"
@@ -99,8 +99,8 @@ class Segment:
     sequence_number: int = 0     # 32 bits
     ack_number: int = 0          # 32 bits
     data_offset: int = 0         # 4 bits
-    reserved: int = 0            # 3 bits
-    flags: int = 0               # 9 bits
+    reserved: int = 0            # 4 bits
+    flags: int = 0               # 8 bits
     window_size: int = 0         # 16 bits
     checksum: bytes = bytes(2)   # 2 bytes
     urgent_pointer: int = 0      # 16 bits
@@ -168,13 +168,25 @@ def ethernet_decapsulation(frame: bytes) -> FrameII | FrameIEEE:
 def packet_decapsulation(data: bytes) -> Packet:
     """Process the payload of a frame and extract the IPv4 packet header and data."""
 
-    return Packet() # TODO create packet
+    return Packet() # TODO
 
 
 def segment_decapsulation(packet: Packet) -> Segment:
     """Process an IPv4 packet and extract the TCP segment header and data."""
 
-    return Segment() # TODO create segment
+    return Segment() # TODO
+
+
+def ones_complement_sum(data: bytes) -> int:
+    return 0  # TODO (use and cite RFC 1071)
+
+
+def calculate_ip_checksum(packet: Packet) -> int:
+    return 0  # TODO
+
+
+def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
+    return 0  # TODO
 
 
 def main(filename: str):
@@ -196,12 +208,21 @@ def main(filename: str):
         if isinstance(frame, FrameIEEE) or frame.eth_type != b"\x08\x00":
             continue
 
-        packet = packet_decapsulation(frame.data)
+        try:
+            packet = packet_decapsulation(frame.data)
+        except ValueError as e:
+            print(f"\t{e}")
+            continue
+
         print(f"\t{packet}")
         if packet.protocol != 6:
             continue
 
-        segment = segment_decapsulation(packet)
+        try:
+            segment = segment_decapsulation(packet)
+        except ValueError as e:
+            print(f"\t{e}")
+            continue
         print(f"\t{segment}")
 
 
