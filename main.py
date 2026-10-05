@@ -198,32 +198,38 @@ def main(filename: str):
     # Process each frame and print the extracted information
     for index, raw in enumerate(frames):
         print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
+
+        # Decapsulate the Ethernet frame
         try:
             frame = ethernet_decapsulation(raw)
+            print(f"\t{frame}")
         except ValueError as e:
             print(f"\t{e}")
             continue
 
-        print(f"\t{frame}")
+        # Only process IPv4 packets
         if isinstance(frame, FrameIEEE) or frame.eth_type != b"\x08\x00":
             continue
 
+        # Decapsulate the IPv4 packet
         try:
             packet = packet_decapsulation(frame.data)
+            print(f"\t{packet}")
         except ValueError as e:
             print(f"\t{e}")
             continue
 
-        print(f"\t{packet}")
+        # Only process TCP segments
         if packet.protocol != 6:
             continue
 
+        # Decapsulate the TCP segment
         try:
             segment = segment_decapsulation(packet)
+            print(f"\t{segment}")
         except ValueError as e:
             print(f"\t{e}")
             continue
-        print(f"\t{segment}")
 
 
 if __name__ == "__main__":
