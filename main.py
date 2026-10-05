@@ -168,17 +168,17 @@ def ethernet_decapsulation(frame: bytes) -> FrameII | FrameIEEE:
 def packet_decapsulation(data: bytes) -> Packet:
     """Process the payload of a frame and extract the IPv4 packet header and data."""
 
-    return Packet() # TODO
+    return Packet() # TODO (RFC 791)
 
 
 def segment_decapsulation(packet: Packet) -> Segment:
     """Process an IPv4 packet and extract the TCP segment header and data."""
 
-    return Segment() # TODO
+    return Segment() # TODO (RFC 9293)
 
 
 def ones_complement_sum(data: bytes) -> int:
-    return 0  # TODO (use and cite RFC 1071)
+    return 0  # TODO (RFC 1071)
 
 
 def calculate_ip_checksum(packet: Packet) -> int:
