@@ -4,6 +4,7 @@ Course: CSCI 351 Data Communications and Networks
 
 Team members:
     - Jonathan Schultz (jss5874@rit.edu)
+    - Jay Stebbins (jks1805@rit.edu)
 
 Sources:
     - RFC 791, Internet Protocol
@@ -209,9 +210,56 @@ def packet_decapsulation(data: bytes) -> Packet:
     )
 
 def segment_decapsulation(packet: Packet) -> Segment:
-    """Process an IPv4 packet and extract the TCP segment header and data."""
+    """Process an IPv4 packet and extract the TCP segment header and data.
+    TCP header layout follows RFC 9293 Section 3.1. """
 
-    return Segment() # TODO (RFC 9293)
+
+    if packet.fragment_offset != 0:
+        raise ValueError("Cannot parse TCP header from a non-initial IPv4 fragment.")
+
+    data = packet.data
+
+    # RFC 9293 Section 3.1: The minimum TCP header is 20 bytes
+    if len(data) < 20:
+        raise ValueError("Packet is too short to hold a TCP header.")
+
+    
+    # RFC 9293 Section 3.1:
+    # Byte 12 contains two 4-bit fields: upper 4 bits = Data Offset lower 4 bits = Reserved
+    # Shifting right by 4 removes the Reserved bits and leaves Data Offset.
+    data_offset = data[12] >> 4
+    # RFC 9293 defines Data Offset as the number of 32-bit words in the TCP header, One 32-bit word = 4 bytes
+    header_length = data_offset * 4
+
+    # RFC 9293's minimum TCP header is 5 32-bit words
+    if data_offset < 5:
+        raise ValueError("Invalid TCP data offset.")
+
+    if header_length > len(data):
+        raise ValueError(
+            "TCP header length exceeds available packet data."
+        )
+
+    return Segment(
+        # RFC 9293 Section 3.1: Source Port and Destination Port are each 16-bit fields. TCP uses network byte order, so multi-byte values are read big-endian.
+        source_port=int.from_bytes(data[0:2], "big"),
+        dest_port=int.from_bytes(data[2:4], "big"),
+        # RFC 9293: Sequence Number and Acknowledgment Number are each 32 bits.
+        sequence_number=int.from_bytes(data[4:8], "big"),
+        ack_number=int.from_bytes(data[8:12], "big"),
+        data_offset=data_offset,
+        reserved=data[12] & 0x0F,  # 0x0F = binary 00001111 ANDing with 0x0F preserves only the lower 4 Reserved bits.
+        flags=data[13], # RFC 9293: The next 8 bits are the TCP control bits (flags), Keeping the whole byte preserves all eight flags.
+        # RFC 9293: Window, checksum, and urgent pointer all 16-bit fields.
+        window_size=int.from_bytes(data[14:16], "big"), 
+        checksum=data[16:18],
+        urgent_pointer=int.from_bytes(data[18:20], "big"),
+         # RFC 9293: Options begin after the fixed 20-byte header and continue until the location specified by Data Offset.
+         # Gives the option size as: (Data Offset - 5) * 32 bits
+        optional_data=data[20:header_length],
+        data=data[header_length:]
+    )
+
 
 
 def ones_complement_sum(data: bytes) -> int:
