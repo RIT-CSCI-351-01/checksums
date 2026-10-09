@@ -47,7 +47,7 @@ class FrameII:
         return (
             f"Ethernet II: Dst: {print_mac(self.dest_mac)}, "
             f"Src: {print_mac(self.source_mac)}, "
-            f"Type: {ETH_TYPES.get(eth_type, "Unknown")} (0x{eth_type:04x})"
+            #f"Type: {ETH_TYPES.get(eth_type, "Unknown")} (0x{eth_type:04x})"
         )
 
 @dataclass
@@ -168,8 +168,44 @@ def ethernet_decapsulation(frame: bytes) -> FrameII | FrameIEEE:
 def packet_decapsulation(data: bytes) -> Packet:
     """Process the payload of a frame and extract the IPv4 packet header and data."""
 
-    return Packet() # TODO (RFC 791)
+    # RFC 791: the minimum IPv4 header is 20 bytes
+    if len(data) < 20:
+        raise ValueError("Data is too short to hold an IPv4 header.")
 
+    version = data[0] >> 4
+    ihl = data[0] & 0x0F
+    if version != 4:
+        raise ValueError(f"Not an IPv4 packet (version {version}).")
+
+    # IHL counts 32-bit words, so the header is ihl * 4 bytes long
+    header_length = ihl * 4
+    if header_length < 20 or len(data) < header_length:
+        raise ValueError("Invalid IPv4 header length.")
+
+    total_length = int.from_bytes(data[2:4], "big")
+    if total_length < header_length:
+        raise ValueError("IPv4 total length is smaller than the header length.")
+
+    flags_and_offset = int.from_bytes(data[6:8], "big")
+
+    return Packet(
+        version=version,
+        ihl=ihl,
+        tos=data[1],
+        total_length=total_length,
+        identification=int.from_bytes(data[4:6], "big"),
+        flags=flags_and_offset >> 13,             # top 3 bits
+        fragment_offset=flags_and_offset & 0x1FFF,  # low 13 bits
+        ttl=data[8],
+        protocol=data[9],
+        header_checksum=data[10:12],
+        source_ip=data[12:16],
+        dest_ip=data[16:20],
+        options=data[20:header_length],
+        # total_length marks where the packet ends, so Ethernet padding
+        # after it isn't treated as payload
+        data=data[header_length:total_length],
+    )
 
 def segment_decapsulation(packet: Packet) -> Segment:
     """Process an IPv4 packet and extract the TCP segment header and data."""
@@ -197,8 +233,7 @@ def main(filename: str):
 
     # Process each frame and print the extracted information
     for index, raw in enumerate(frames):
-        print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
-
+        #print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
         # Decapsulate the Ethernet frame
         try:
             frame = ethernet_decapsulation(raw)
