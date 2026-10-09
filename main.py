@@ -47,6 +47,7 @@ class FrameII:
         return (
             f"Ethernet II: Dst: {print_mac(self.dest_mac)}, "
             f"Src: {print_mac(self.source_mac)}, "
+            f"Type: {ETH_TYPES.get(eth_type, 'Unknown')} (0x{eth_type:04x})"
             #f"Type: {ETH_TYPES.get(eth_type, "Unknown")} (0x{eth_type:04x})"
         )
 
@@ -234,6 +235,9 @@ def main(filename: str):
     # Process each frame and print the extracted information
     for index, raw in enumerate(frames):
         #print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
+        prefix = "" if index == 0 else "\n"
+        print(f"{prefix}Packet {index + 1}")
+
         # Decapsulate the Ethernet frame
         try:
             frame = ethernet_decapsulation(raw)
