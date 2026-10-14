@@ -5,6 +5,7 @@ Course: CSCI 351 Data Communications and Networks
 Team members:
     - Jonathan Schultz (jss5874@rit.edu)
     - Jay Stebbins (jks1805@rit.edu)
+    - Caden Seaman (cjs6589@rit.edu)
 
 Sources:
     - RFC 791, Internet Protocol
