@@ -263,15 +263,67 @@ def segment_decapsulation(packet: Packet) -> Segment:
 
 
 def ones_complement_sum(data: bytes) -> int:
-    return 0  # TODO (RFC 1071)
+    """Return the 16-bit one's complement sum of data (RFC 1071)."""
+    total = 0
+    even_length = len(data) - len(data) % 2
+
+    # Adjacent octets form 16-bit words in network byte order.
+    for index in range(0, even_length, 2):
+        total += int.from_bytes(data[index:index + 2], "big")
+
+    # A trailing odd octet is padded on the right with zeros.
+    if len(data) % 2 == 1:
+        total += data[-1] << 8
+
+    # End-around carry folds any overflow back into 16 bits.
+    while total >> 16:
+        total = (total & 0xFFFF) + (total >> 16)
+
+    return ~total
 
 
 def calculate_ip_checksum(packet: Packet) -> int:
-    return 0  # TODO
+    """Return the IPv4 header checksum (RFC 791)."""
+    # RFC 791: the checksum field is zero while the header is summed.
+    flags_and_offset = (packet.flags << 13) | packet.fragment_offset
+    header = (
+        bytes([(packet.version << 4) | packet.ihl, packet.tos])
+        + packet.total_length.to_bytes(2, "big")
+        + packet.identification.to_bytes(2, "big")
+        + flags_and_offset.to_bytes(2, "big")
+        + bytes([packet.ttl, packet.protocol, 0, 0])
+        + packet.source_ip
+        + packet.dest_ip
+        + packet.options
+    )
+    return (ones_complement_sum(header)) & 0xFFFF
 
 
 def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
-    return 0  # TODO
+    """Return the TCP checksum over the pseudo-header and segment (RFC 9293)."""
+    # RFC 9293: the checksum field is zero while the segment is summed.
+    offset_and_reserved = (segment.data_offset << 4) | segment.reserved
+    tcp_header = (
+        segment.source_port.to_bytes(2, "big")
+        + segment.dest_port.to_bytes(2, "big")
+        + segment.sequence_number.to_bytes(4, "big")
+        + segment.ack_number.to_bytes(4, "big")
+        + bytes([offset_and_reserved, segment.flags])
+        + segment.window_size.to_bytes(2, "big")
+        + b"\x00\x00"
+        + segment.urgent_pointer.to_bytes(2, "big")
+        + segment.optional_data
+    )
+    segment_bytes = tcp_header + segment.data
+
+    # The pseudo-header is conceptually prefixed to the segment. TCP length is the header plus data, and does not include the pseudo-header.
+    pseudo_header = (
+        packet.source_ip
+        + packet.dest_ip
+        + bytes([0, packet.protocol])
+        + len(segment_bytes).to_bytes(2, "big")
+    )
+    return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
 
 
 def main(filename: str):
@@ -306,6 +358,15 @@ def main(filename: str):
             print(f"\t{e}")
             continue
 
+        # Compare the header checksum with the value computed from the header
+        received_ip = int.from_bytes(packet.header_checksum, "big")
+        calculated_ip = calculate_ip_checksum(packet)
+        ip_result = "valid" if received_ip == calculated_ip else "invalid"
+        print(
+            f"\tIP Checksum: received 0x{received_ip:04x}, "
+            f"calculated 0x{calculated_ip:04x} ({ip_result})"
+        )
+
         # Only process TCP segments
         if packet.protocol != 6:
             continue
@@ -317,6 +378,15 @@ def main(filename: str):
         except ValueError as e:
             print(f"\t{e}")
             continue
+
+        # Compare the TCP checksum with the value computed over the pseudo-header and segment
+        received_tcp = int.from_bytes(segment.checksum, "big")
+        calculated_tcp = calculate_tcp_checksum(packet, segment)
+        tcp_result = "valid" if received_tcp == calculated_tcp else "invalid"
+        print(
+            f"\tTCP Checksum: received 0x{received_tcp:04x}, "
+            f"calculated 0x{calculated_tcp:04x} ({tcp_result})"
+        )
 
 
 if __name__ == "__main__":
