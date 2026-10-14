@@ -10,6 +10,9 @@ Team members:
 
 Sources:
     - RFC 791, Internet Protocol
+    - RFC 826, Address Resolution Protocol
+    - RFC 894, IPv4 over Ethernet
+    - RFC 2464, IPv6 over Ethernet
     - RFC 9293, Transmission Control Protocol
     - RFC 1071, Computing the Internet Checksum
     - IEEE 802.3 Standard
@@ -72,29 +75,43 @@ class FrameIEEE:
 
 @dataclass
 class Packet:
-    version: int = 0            # 4 bits
-    ihl: int = 0                 # 4 bits
-    tos: int = 0                 # 8 bits
-    total_length: int = 0        # 16 bits
-    identification: int = 0      # 16 bits
-    flags: int = 0               # 3 bits
-    fragment_offset: int = 0     # 13 bits
-    ttl: int = 0                 # 8 bits
-    protocol: int = 0            # 8 bits
-    header_checksum: bytes = bytes(2)  # 2 bytes
-    source_ip: bytes = bytes(4)        # 4 bytes
-    dest_ip: bytes = bytes(4)          # 4 bytes
-    options: bytes = b""               # 0-40 bytes
-    data: bytes = b""                  # variable length
+    version: int = 0                    # 4 bits
+    ihl: int = 0                        # 4 bits
+    tos: int = 0                        # 8 bits
+    total_length: int = 0               # 16 bits
+    identification: int = 0             # 16 bits
+    flags: int = 0                      # 3 bits
+    fragment_offset: int = 0            # 13 bits
+    ttl: int = 0                        # 8 bits
+    protocol: int = 0                   # 8 bits
+    header_checksum: bytes = bytes(2)   # 2 bytes
+    source_ip: bytes = bytes(4)         # 4 bytes
+    dest_ip: bytes = bytes(4)           # 4 bytes
+    options: bytes = b""                # 0-40 bytes
+    data: bytes = b""                   # variable length
 
     def __str__(self) -> str:
         """Return a string representation of the IPv4 packet."""
-        return ( 
-            f"IPv4: Src: {format_ip(self.source_ip)}, "
-            f"Dst: {format_ip(self.dest_ip)}, "
-            f"Protocol: {self.protocol}"
+        flag_names = [
+            name for bit, name in ((0x4, "Reserved"), (0x2, "DF"), (0x1, "MF"))
+            if self.flags & bit
+        ]
+        return (
+            f"IPv4:\n"
+            f"\t\tVersion: {self.version}\n"
+            f"\t\tHeader Length: {self.ihl * 4} bytes ({self.ihl})\n"
+            f"\t\tType of Service: 0x{self.tos:02x}\n"
+            f"\t\tTotal Length: {self.total_length}\n"
+            f"\t\tIdentification: 0x{self.identification:04x} "
+            f"({self.identification})\n"
+            f"\t\tFlags: 0b{self.flags:03b} ({', '.join(flag_names) or 'None'})\n"
+            f"\t\tFragment Offset: {self.fragment_offset}\n"
+            f"\t\tTime to Live: {self.ttl}\n"
+            f"\t\tProtocol: {self.protocol}\n"
+            f"\t\tSource Address: {format_ip(self.source_ip)}\n"
+            f"\t\tDestination Address: {format_ip(self.dest_ip)}\n"
+            f"\t\tOptions: {len(self.options)} bytes"
         )
-
 
 @dataclass
 class Segment:
@@ -113,15 +130,34 @@ class Segment:
 
     def __str__(self) -> str:
         """Return a string representation of the TCP segment."""
+        
+        flag_names = [
+            name for bit, name in (
+                (0x80, "CWR"), (0x40, "ECE"), (0x20, "URG"), (0x10, "ACK"),
+                (0x08, "PSH"), (0x04, "RST"), (0x02, "SYN"), (0x01, "FIN"),
+            )
+            if self.flags & bit
+        ]
         return (
-            f"TCP: Src Port: {self.source_port}, "
-            f"Dst Port: {self.dest_port}, "
-            f"Seq: {self.sequence_number}, "
-            f"Ack: {self.ack_number}"
+            f"TCP:\n"
+            f"\t\tSource Port: {self.source_port}\n"
+            f"\t\tDestination Port: {self.dest_port}\n"
+            f"\t\tSequence Number: {self.sequence_number}\n"
+            f"\t\tAcknowledgment Number: {self.ack_number}\n"
+            f"\t\tHeader Length: {self.data_offset * 4} bytes "
+            f"({self.data_offset})\n"
+            f"\t\tReserved: {self.reserved}\n"
+            f"\t\tFlags: 0x{self.flags:02x} ({', '.join(flag_names) or 'None'})\n"
+            f"\t\tWindow: {self.window_size}\n"
+            f"\t\tUrgent Pointer: {self.urgent_pointer}\n"
+            f"\t\tOptions: {len(self.optional_data)} bytes\n"
+            f"\t\tPayload: {len(self.data)} bytes"
         )
 
 
 def parse(filename: str) -> list[bytes]:
+    """Read a text file containing hex-encoded Ethernet frames."""
+
     try:
         with open(filename) as file:
             frames = []
@@ -224,7 +260,6 @@ def segment_decapsulation(packet: Packet) -> Segment:
     # RFC 9293 Section 3.1: The minimum TCP header is 20 bytes
     if len(data) < 20:
         raise ValueError("Packet is too short to hold a TCP header.")
-
     
     # RFC 9293 Section 3.1:
     # Byte 12 contains two 4-bit fields: upper 4 bits = Data Offset lower 4 bits = Reserved
@@ -263,7 +298,6 @@ def segment_decapsulation(packet: Packet) -> Segment:
     )
 
 
-
 def ones_complement_sum(data: bytes) -> int:
     """Return the 16-bit one's complement sum of data (RFC 1071)."""
     total = 0
@@ -286,6 +320,7 @@ def ones_complement_sum(data: bytes) -> int:
 
 def calculate_ip_checksum(packet: Packet) -> int:
     """Return the IPv4 header checksum (RFC 791)."""
+    
     # RFC 791: the checksum field is zero while the header is summed.
     flags_and_offset = (packet.flags << 13) | packet.fragment_offset
     header = (
