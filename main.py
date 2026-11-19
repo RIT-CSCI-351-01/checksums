@@ -1,5 +1,5 @@
 """
-Assignment: Checksums Part 1
+Assignment: Checksums Part 2
 Course: CSCI 351 Data Communications and Networks
 
 Team members:
@@ -20,7 +20,7 @@ Sources:
 """
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 def print_mac(mac: bytes) -> str:
@@ -154,7 +154,62 @@ class Segment:
             f"\t\tPayload: {len(self.data)} bytes"
         )
 
+@dataclass
+class PacketStatistics:
+    """Store Part 2 protocol counts, L3 sizes, and capture rates."""
 
+    # Layer 2
+    ethernet_ii: int = 0
+    ieee_802_3: int = 0
+
+    # Layer 3
+    ipv4: int = 0
+    ipv6: int = 0
+    arp: int = 0
+    other_l3: int = 0
+
+    # Layer 4 
+    tcp: int = 0
+    udp: int = 0
+    icmp: int = 0
+    icmpv6: int = 0
+    other_l4: int = 0
+
+    # Keys are the lower bounds of 250-byte L3 packet-size bins 
+    # ie. 0 represents 0-249 bytes, 250 represents 250-499.
+    # Values are the number of frames in that bin
+    packet_sizes: dict[int, int] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        """Format collected statistics similarly to existing packet classes."""
+        size_lines = (
+            "\n".join(
+                f"\t\t{lower}-{lower + 249} bytes: {count}"
+                for lower, count in sorted(self.packet_sizes.items())
+            ) if self.packet_sizes else "\t\tNo packet-size data"
+        )
+        return (
+            f"Packet Statistics:\n"
+            f"\tLayer 2:\n"
+            f"\t\tEthernet II: {self.ethernet_ii}\n"
+            f"\t\tIEEE 802.3: {self.ieee_802_3}\n"
+            f"\tLayer 3:\n"
+            f"\t\tIPv4: {self.ipv4}\n"
+            f"\t\tIPv6: {self.ipv6}\n"
+            f"\t\tARP: {self.arp}\n"
+            f"\t\tOther: {self.other_l3}\n"
+            f"\tLayer 4:\n"
+            f"\t\tTCP: {self.tcp}\n"
+            f"\t\tUDP: {self.udp}\n"
+            f"\t\tICMP: {self.icmp}\n"
+            f"\t\tICMPv6: {self.icmpv6}\n"
+            f"\t\tOther: {self.other_l4}\n"
+            f"\tL3 Packet Sizes (250-byte bins):\n"
+            f"{size_lines}\n"
+            f"\tPackets Per Second (first 10 seconds):\n"
+        )
+
+"""TODO: Add aditional capabilities to  parse timestamps for packets/second calculations"""
 def parse(filename: str) -> list[bytes]:
     """Read a text file containing hex-encoded Ethernet frames."""
 
@@ -362,6 +417,77 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     )
     return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
 
+def calculate_packet_statistics(frames: list[bytes]) -> PacketStatistics:
+    """TODO: Count L2/L3/L4 protocols and group L3 sizes in 250-byte bins."""
+    stats = PacketStatistics()
+
+    return stats
+
+def calculate_packets_per_second(frames: list[bytes]) -> list[bytes]:
+    """TODO: The packets present in the first 10 second of the capture need to be collected.
+            From there the packets/second needs to be calculated and put in a structure for graphing."""
+
+    return
+
+def graph_packet_statistics(statistics: PacketStatistics):
+    """TODO: Display the protocol and packet-size statistics as bar graphs."""
+    pass
+
+def graph_packets_per_second(packets_per_sec: list[bytes]):
+    """TODO: Plot packets per second over the capture's first ten seconds."""
+    pass
+
+def number_converter():
+    """Detect input format and convert unsigned 16-bit numbers."""
+    print("\nNumber Converter (0 to 65535 / 16 bits)")
+    print("Enter 16 binary digits, a decimal number, or a hexadecimal number.")
+    print("Hexadecimal numbers must start with 0x.")
+    print("Enter q to quit.")
+   
+    while True:
+        try:
+            number_text = input("\nEnter number (q to quit): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting number converter.")
+            break
+
+        if number_text.lower() == "q":
+            print("Exiting number converter.")
+            break
+
+        # Detect the base: exactly 16 binary digits, 0x-prefixed
+        # hexadecimal, or unprefixed decimal digits.
+        if len(number_text) == 16 and all(c in "01" for c in number_text):
+            base = 2
+            name = "Binary"
+        elif number_text.lower().startswith("0x"):
+            base = 16
+            name = "Hexadecimal"
+        elif number_text and all(c in "0123456789" for c in number_text):
+            base = 10
+            name = "Decimal"
+        else:
+            print("Invalid number. Enter 16 bits, decimal, or 0x-prefixed hexadecimal.")
+            continue
+
+        try:
+            number = int(number_text, base)
+        except ValueError:
+            print(f"Invalid {name.lower()} number. Try again.")
+            continue
+
+        if not 0 <= number <= 0xFFFF:
+            print("Number out of range. Enter a value from 0 to 65535 (16 bits).")
+            continue
+
+        print(f"Detected: {name}")
+        if base != 2:
+            print(f"Binary: {number:016b}")
+        if base != 16:
+            print(f"Hexadecimal: 0x{number:04X}")
+        if base != 10:
+            print(f"Decimal: {number}")
+
 
 def main(filename: str):
     frames = parse(filename)
@@ -424,6 +550,14 @@ def main(filename: str):
             f"\tTCP Checksum: received 0x{received_tcp:04x}, "
             f"calculated 0x{calculated_tcp:04x} ({tcp_result})"
         )
+
+    statistics = calculate_packet_statistics(frames)
+    first_10_sec_data = calculate_packets_per_second(frames)
+
+    graph_packet_statistics(statistics)
+    graph_packets_per_second(first_10_sec_data)
+
+    number_converter()
 
 
 if __name__ == "__main__":
