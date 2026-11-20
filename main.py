@@ -21,7 +21,8 @@ Sources:
 
 import sys
 from dataclasses import dataclass, field
-
+import numpy as np
+import matplotlib.pyplot as plt
 
 def print_mac(mac: bytes) -> str:
     """Format a MAC address from raw bytes to hexadecimal representation."""
@@ -430,12 +431,67 @@ def calculate_packets_per_second(frames: list[bytes]) -> list[bytes]:
     return
 
 def graph_packet_statistics(statistics: PacketStatistics):
-    """TODO: Display the protocol and packet-size statistics as bar graphs."""
-    pass
+    """Display the protocol and packet-size statistics as bar graphs."""
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+
+    def _bar(ax, items: list[tuple[str, int]], title: str, xlabel: str):
+        items = [(label, count) for label, count in items if count > 0]
+        if not items:
+            ax.set_title(f"{title} (no data)")
+            return
+        labels, values = zip(*items)
+        ax.bar(labels, values, color="steelblue", edgecolor="black")
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Packet count")
+        ax.tick_params(axis="x", rotation=45)
+        ax.grid(True, axis="y", linestyle=":", alpha=0.6)
+
+    l2_items = [
+        ("Ethernet II", statistics.ethernet_ii),
+        ("IEEE 802.3", statistics.ieee_802_3),
+    ]
+    l3_items = [
+        ("IPv4", statistics.ipv4),
+        ("IPv6", statistics.ipv6),
+        ("ARP", statistics.arp),
+        ("Other", statistics.other_l3),
+    ]
+    l4_items = [
+        ("TCP", statistics.tcp),
+        ("UDP", statistics.udp),
+        ("ICMP", statistics.icmp),
+        ("ICMPv6", statistics.icmpv6),
+        ("Other", statistics.other_l4),
+    ]
+    size_items = [
+        (f"{lower}-{lower + 249}", count)
+        for lower, count in sorted(statistics.packet_sizes.items())
+    ]
+
+    _bar(axes[0, 0], l2_items, "L2 Protocol Distribution", "L2 type")
+    _bar(axes[0, 1], l3_items, "L3 Protocol Distribution", "L3 protocol")
+    _bar(axes[1, 0], l4_items, "L4 Protocol Distribution", "L4 protocol")
+    _bar(axes[1, 1], size_items, "L3 Packet Size Distribution", "Size range (bytes)")
+
+    fig.tight_layout()
+    return fig
 
 def graph_packets_per_second(packets_per_sec: list[bytes]):
-    """TODO: Plot packets per second over the capture's first ten seconds."""
-    pass
+    """Plot packets per second over the capture's first ten seconds."""
+    x = packets_per_sec.bin_edges[:-1]
+    y = packets_per_sec.rates
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ax.plot(x, y, color="black", linewidth=0.7)
+    ax.set_title("Packets/sec — First 10 Seconds of Capture")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Packets/1 sec")
+    ax.grid(True, linestyle=":", linewidth=0.5, color="gray", alpha=0.6)
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(bottom=0)
+    fig.tight_layout()
+
+    return fig
 
 def number_converter():
     """Detect input format and convert unsigned 16-bit numbers."""
