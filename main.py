@@ -494,38 +494,33 @@ def graph_packets_per_second(packets_per_sec: list[bytes]):
     return fig
 
 def number_converter():
-    """Detect input format and convert unsigned 16-bit numbers."""
-    print("\nNumber Converter (0 to 65535 / 16 bits)")
-    print("Enter 16 binary digits, a decimal number, or a hexadecimal number.")
-    print("Hexadecimal numbers must start with 0x.")
-    print("Enter q to quit.")
+    """Repeatedly convert unsigned 16-bit binary, hexadecimal, or decimal input."""
+    print("\nNumber Converter (0 to 65535 / Max 16 bits)")
+    print("Choose b for binary, h for hexadecimal, d for decimal, or q to quit.")
+
+    bases = {"b": (2, "Binary"), "h": (16, "Hexadecimal"),
+             "d": (10, "Decimal")}
    
     while True:
         try:
-            number_text = input("\nEnter number (q to quit): ").strip()
+            choice = input("\nInput base (b/h/d/q): ").strip().lower()
         except (EOFError, KeyboardInterrupt):
             print("\nExiting number converter.")
             break
-
-        if number_text.lower() == "q":
+        if choice.lower() == "q":
             print("Exiting number converter.")
             break
+        if choice not in bases:
+            print("Invalid choice. Enter b, h, d, or q.")
+            continue   
 
-        # Detect the base: exactly 16 binary digits, 0x-prefixed
-        # hexadecimal, or unprefixed decimal digits.
-        if len(number_text) == 16 and all(c in "01" for c in number_text):
-            base = 2
-            name = "Binary"
-        elif number_text.lower().startswith("0x"):
-            base = 16
-            name = "Hexadecimal"
-        elif number_text and all(c in "0123456789" for c in number_text):
-            base = 10
-            name = "Decimal"
-        else:
-            print("Invalid number. Enter 16 bits, decimal, or 0x-prefixed hexadecimal.")
-            continue
-
+        base, name = bases[choice]
+        try:
+            number_text = input("\nEnter number (q to quit): ").strip()
+        except (EOFError, KeyboardInterrupt):
+                    print("\nExiting number converter.")
+                    break
+        
         try:
             number = int(number_text, base)
         except ValueError:
@@ -536,12 +531,11 @@ def number_converter():
             print("Number out of range. Enter a value from 0 to 65535 (16 bits).")
             continue
 
-        print(f"Detected: {name}")
-        if base != 2:
+        if choice != "b":
             print(f"Binary: {number:016b}")
-        if base != 16:
-            print(f"Hexadecimal: 0x{number:04X}")
-        if base != 10:
+        if choice != "h":
+            print(f"Hexadecimal: 0x{number:X}")
+        if choice != "d":
             print(f"Decimal: {number}")
 
 
