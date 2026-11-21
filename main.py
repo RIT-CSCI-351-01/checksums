@@ -1,5 +1,5 @@
 """
-Assignment: Checksums Part 1
+Assignment: Checksums Part 2
 Course: CSCI 351 Data Communications and Networks
 
 Team members:
@@ -20,8 +20,9 @@ Sources:
 """
 
 import sys
-from dataclasses import dataclass
-
+from dataclasses import dataclass, field
+import numpy as np
+import matplotlib.pyplot as plt
 
 def print_mac(mac: bytes) -> str:
     """Format a MAC address from raw bytes to hexadecimal representation."""
@@ -154,7 +155,62 @@ class Segment:
             f"\t\tPayload: {len(self.data)} bytes"
         )
 
+@dataclass
+class PacketStatistics:
+    """Store Part 2 protocol counts, L3 sizes, and capture rates."""
 
+    # Layer 2
+    ethernet_ii: int = 0
+    ieee_802_3: int = 0
+
+    # Layer 3
+    ipv4: int = 0
+    ipv6: int = 0
+    arp: int = 0
+    other_l3: int = 0
+
+    # Layer 4 
+    tcp: int = 0
+    udp: int = 0
+    icmp: int = 0
+    icmpv6: int = 0
+    other_l4: int = 0
+
+    # Keys are the lower bounds of 250-byte L3 packet-size bins 
+    # ie. 0 represents 0-249 bytes, 250 represents 250-499.
+    # Values are the number of frames in that bin
+    packet_sizes: dict[int, int] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        """Format collected statistics similarly to existing packet classes."""
+        size_lines = (
+            "\n".join(
+                f"\t\t{lower}-{lower + 249} bytes: {count}"
+                for lower, count in sorted(self.packet_sizes.items())
+            ) if self.packet_sizes else "\t\tNo packet-size data"
+        )
+        return (
+            f"Packet Statistics:\n"
+            f"\tLayer 2:\n"
+            f"\t\tEthernet II: {self.ethernet_ii}\n"
+            f"\t\tIEEE 802.3: {self.ieee_802_3}\n"
+            f"\tLayer 3:\n"
+            f"\t\tIPv4: {self.ipv4}\n"
+            f"\t\tIPv6: {self.ipv6}\n"
+            f"\t\tARP: {self.arp}\n"
+            f"\t\tOther: {self.other_l3}\n"
+            f"\tLayer 4:\n"
+            f"\t\tTCP: {self.tcp}\n"
+            f"\t\tUDP: {self.udp}\n"
+            f"\t\tICMP: {self.icmp}\n"
+            f"\t\tICMPv6: {self.icmpv6}\n"
+            f"\t\tOther: {self.other_l4}\n"
+            f"\tL3 Packet Sizes (250-byte bins):\n"
+            f"{size_lines}\n"
+            f"\tPackets Per Second (first 10 seconds):\n"
+        )
+
+"""TODO: Add aditional capabilities to  parse timestamps for packets/second calculations"""
 def parse(filename: str) -> list[bytes]:
     """Read a text file containing hex-encoded Ethernet frames."""
 
@@ -362,6 +418,126 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     )
     return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
 
+def calculate_packet_statistics(frames: list[bytes]) -> PacketStatistics:
+    """TODO: Count L2/L3/L4 protocols and group L3 sizes in 250-byte bins."""
+    stats = PacketStatistics()
+
+    return stats
+
+def calculate_packets_per_second(frames: list[bytes]) -> list[bytes]:
+    """TODO: The packets present in the first 10 second of the capture need to be collected.
+            From there the packets/second needs to be calculated and put in a structure for graphing."""
+
+    return
+
+def graph_packet_statistics(statistics: PacketStatistics):
+    """Display the protocol and packet-size statistics as bar graphs."""
+    fig, axes = plt.subplots(2, 2, figsize=(11, 8))
+
+    def _bar(ax, items: list[tuple[str, int]], title: str, xlabel: str):
+        items = [(label, count) for label, count in items if count > 0]
+        if not items:
+            ax.set_title(f"{title} (no data)")
+            return
+        labels, values = zip(*items)
+        ax.bar(labels, values, color="steelblue", edgecolor="black")
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel("Packet count")
+        ax.tick_params(axis="x", rotation=45)
+        ax.grid(True, axis="y", linestyle=":", alpha=0.6)
+
+    l2_items = [
+        ("Ethernet II", statistics.ethernet_ii),
+        ("IEEE 802.3", statistics.ieee_802_3),
+    ]
+    l3_items = [
+        ("IPv4", statistics.ipv4),
+        ("IPv6", statistics.ipv6),
+        ("ARP", statistics.arp),
+        ("Other", statistics.other_l3),
+    ]
+    l4_items = [
+        ("TCP", statistics.tcp),
+        ("UDP", statistics.udp),
+        ("ICMP", statistics.icmp),
+        ("ICMPv6", statistics.icmpv6),
+        ("Other", statistics.other_l4),
+    ]
+    size_items = [
+        (f"{lower}-{lower + 249}", count)
+        for lower, count in sorted(statistics.packet_sizes.items())
+    ]
+
+    _bar(axes[0, 0], l2_items, "L2 Protocol Distribution", "L2 type")
+    _bar(axes[0, 1], l3_items, "L3 Protocol Distribution", "L3 protocol")
+    _bar(axes[1, 0], l4_items, "L4 Protocol Distribution", "L4 protocol")
+    _bar(axes[1, 1], size_items, "L3 Packet Size Distribution", "Size range (bytes)")
+
+    fig.tight_layout()
+    return fig
+
+def graph_packets_per_second(packets_per_sec: list[bytes]):
+    """Plot packets per second over the capture's first ten seconds."""
+    x = packets_per_sec.bin_edges[:-1]
+    y = packets_per_sec.rates
+    fig, ax = plt.subplots(figsize=(9, 4.5))
+    ax.plot(x, y, color="black", linewidth=0.7)
+    ax.set_title("Packets/sec — First 10 Seconds of Capture")
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("Packets/1 sec")
+    ax.grid(True, linestyle=":", linewidth=0.5, color="gray", alpha=0.6)
+    ax.set_xlim(x.min(), x.max())
+    ax.set_ylim(bottom=0)
+    fig.tight_layout()
+
+    return fig
+
+def number_converter():
+    """Repeatedly convert unsigned 16-bit binary, hexadecimal, or decimal input."""
+    print("\nNumber Converter (0 to 65535 / Max 16 bits)")
+    print("Choose b for binary, h for hexadecimal, d for decimal, or q to quit.")
+
+    bases = {"b": (2, "Binary"), "h": (16, "Hexadecimal"),
+             "d": (10, "Decimal")}
+   
+    while True:
+        try:
+            choice = input("\nInput base (b/h/d/q): ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nExiting number converter.")
+            break
+        if choice.lower() == "q":
+            print("Exiting number converter.")
+            break
+        if choice not in bases:
+            print("Invalid choice. Enter b, h, d, or q.")
+            continue   
+
+        base, name = bases[choice]
+        try:
+            number_text = input("\nEnter number (q to quit): ").strip()
+        except (EOFError, KeyboardInterrupt):
+                    print("\nExiting number converter.")
+                    break
+        
+        try:
+            number = int(number_text, base)
+        except ValueError:
+            print(f"Invalid {name.lower()} number. Try again.")
+            continue
+
+        if not 0 <= number <= 0xFFFF:
+            print("Number out of range. Enter a value from 0 to 65535 (16 bits).")
+            continue
+
+        if choice != "b":
+            print(f"Binary: {number:016b}")
+        if choice != "h":
+            print(f"Hexadecimal: 0x{number:X}")
+        if choice != "d":
+            print(f"Decimal: {number}")
+
 
 def main(filename: str):
     frames = parse(filename)
@@ -424,6 +600,14 @@ def main(filename: str):
             f"\tTCP Checksum: received 0x{received_tcp:04x}, "
             f"calculated 0x{calculated_tcp:04x} ({tcp_result})"
         )
+
+    statistics = calculate_packet_statistics(frames)
+    first_10_sec_data = calculate_packets_per_second(frames)
+
+    graph_packet_statistics(statistics)
+    graph_packets_per_second(first_10_sec_data)
+
+    number_converter()
 
 
 if __name__ == "__main__":
