@@ -210,23 +210,30 @@ class PacketStatistics:
             f"\tPackets Per Second (first 10 seconds):\n"
         )
 
-"""TODO: Add aditional capabilities to  parse timestamps for packets/second calculations"""
-def parse(filename: str) -> list[bytes]:
+def parse(filename: str) -> list[tuple[float, bytes]]:
     """Read a text file containing hex-encoded Ethernet frames."""
 
     try:
         with open(filename) as file:
             frames = []
             while (line := file.readline()) != "":
-                # Ignore non-data lines and seperators
-                if line.startswith("|"):
-                    # Convert the hex values in the line to bytes and append to frames
+                if line[:1].isdigit():
+                    # Capture timestamp and convert to seconds after midnight
+                    timestamp = line.split()[0]
+                    hours, minutes, seconds, millis, micros = map(
+                        int, timestamp.replace(",", ":").split(":")
+                    )
+                    result = hours * 3600 + minutes * 60 + seconds + (millis * 1000 + micros) / 1_000_000
+
+                    # Read the next line containing the frame data
+                    line = file.readline()
                     hex_values = (
                         int(c.strip(), 16)
                         for c in line.strip().split("|")[2:]
                         if c.strip()
                     )
-                    frames.append(bytes(hex_values))
+
+                    frames.append((result, bytes(hex_values)))
             return frames
     except OSError:
         print(f"Could not open file: {filename}")
@@ -418,13 +425,13 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     )
     return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
 
-def calculate_packet_statistics(frames: list[bytes]) -> PacketStatistics:
+def calculate_packet_statistics(frames: list[tuple[float, bytes]]) -> PacketStatistics:
     """TODO: Count L2/L3/L4 protocols and group L3 sizes in 250-byte bins."""
     stats = PacketStatistics()
 
     return stats
 
-def calculate_packets_per_second(frames: list[bytes]) -> list[bytes]:
+def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> int:
     """TODO: The packets present in the first 10 second of the capture need to be collected.
             From there the packets/second needs to be calculated and put in a structure for graphing."""
 
@@ -546,8 +553,7 @@ def main(filename: str):
         return
 
     # Process each frame and print the extracted information
-    for index, raw in enumerate(frames):
-        #print(f"{"" if index == 0 else "\n"}Packet {index + 1}")
+    for index, (_, raw) in enumerate(frames):
         prefix = "" if index == 0 else "\n"
         print(f"{prefix}Packet {index + 1}")
 
