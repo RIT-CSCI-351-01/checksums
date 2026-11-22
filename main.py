@@ -13,6 +13,7 @@ Sources:
     - RFC 826, Address Resolution Protocol
     - RFC 894, IPv4 over Ethernet
     - RFC 2464, IPv6 over Ethernet
+    - RFC 8200, Internet Protocol, Version 6
     - RFC 9293, Transmission Control Protocol
     - RFC 1071, Computing the Internet Checksum
     - IEEE 802.3 Standard
@@ -174,6 +175,7 @@ class PacketStatistics:
     udp: int = 0
     icmp: int = 0
     icmpv6: int = 0
+    igmp: int = 0
     other_l4: int = 0
 
     # Keys are the lower bounds of 250-byte L3 packet-size bins 
@@ -182,29 +184,38 @@ class PacketStatistics:
     packet_sizes: dict[int, int] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        """Format collected statistics similarly to existing packet classes."""
-        size_lines = (
-            "\n".join(
+        """Show the counts, percents, and size bins."""
+        total = self.ethernet_ii + self.ieee_802_3
+
+        def row(label: str, count: int) -> str:
+            percent = (100 * count / total) if total else 0
+            return f"\t\t{label}: {count} ({percent:.1f}%)"
+
+        if self.packet_sizes:
+            size_lines = "\n".join(
                 f"\t\t{lower}-{lower + 249} bytes: {count}"
                 for lower, count in sorted(self.packet_sizes.items())
-            ) if self.packet_sizes else "\t\tNo packet-size data"
-        )
+            )
+        else:
+            size_lines = "\t\tNo packet-size data"
+
         return (
-            f"Packet Statistics:\n"
+            f"Packet Statistics ({total} frames):\n"
             f"\tLayer 2:\n"
-            f"\t\tEthernet II: {self.ethernet_ii}\n"
-            f"\t\tIEEE 802.3: {self.ieee_802_3}\n"
+            f"{row('Ethernet II', self.ethernet_ii)}\n"
+            f"{row('IEEE 802.3', self.ieee_802_3)}\n"
             f"\tLayer 3:\n"
-            f"\t\tIPv4: {self.ipv4}\n"
-            f"\t\tIPv6: {self.ipv6}\n"
-            f"\t\tARP: {self.arp}\n"
-            f"\t\tOther: {self.other_l3}\n"
+            f"{row('IPv4', self.ipv4)}\n"
+            f"{row('IPv6', self.ipv6)}\n"
+            f"{row('ARP', self.arp)}\n"
+            f"{row('Other', self.other_l3)}\n"
             f"\tLayer 4:\n"
-            f"\t\tTCP: {self.tcp}\n"
-            f"\t\tUDP: {self.udp}\n"
-            f"\t\tICMP: {self.icmp}\n"
-            f"\t\tICMPv6: {self.icmpv6}\n"
-            f"\t\tOther: {self.other_l4}\n"
+            f"{row('TCP', self.tcp)}\n"
+            f"{row('UDP', self.udp)}\n"
+            f"{row('ICMP', self.icmp)}\n"
+            f"{row('ICMPv6', self.icmpv6)}\n"
+            f"{row('IGMP', self.igmp)}\n"
+            f"{row('Other', self.other_l4)}\n"
             f"\tL3 Packet Sizes (250-byte bins):\n"
             f"{size_lines}\n"
             f"\tPackets Per Second (first 10 seconds):\n"
@@ -425,10 +436,168 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     )
     return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
 
-def calculate_packet_statistics(frames: list[tuple[float, bytes]]) -> PacketStatistics:
-    """TODO: Count L2/L3/L4 protocols and group L3 sizes in 250-byte bins."""
-    stats = PacketStatistics()
+# VLAN tags. The real EtherType sits behind the tag.
+VLAN_ETHERTYPES = {0x8100, 0x88A8, 0x9100}
 
+# IPv6 extension headers that store their length in the next byte.
+IPV6_VARIABLE_EXT = {0, 43, 60, 135}
+
+
+def _strip_vlan(eth_type: int, data: bytes) -> tuple[int, bytes]:
+    """Skip VLAN tags and return the protocol and payload underneath."""
+    while eth_type in VLAN_ETHERTYPES and len(data) >= 4:
+        eth_type = int.from_bytes(data[2:4], "big")
+        data = data[4:]
+    return eth_type, data
+
+
+def _count_l4(stats: PacketStatistics, protocol: int) -> None:
+    """Add one to the Layer 4 counter for this protocol number."""
+    if protocol == 6:
+        stats.tcp += 1
+    elif protocol == 17:
+        stats.udp += 1
+    elif protocol == 1:
+        stats.icmp += 1
+    elif protocol == 58:
+        stats.icmpv6 += 1
+    elif protocol == 2:
+        stats.igmp += 1
+    else:
+        stats.other_l4 += 1
+
+
+def _ipv6_packet_size(data: bytes) -> int | None:
+    """IPv6 length is the 40-byte header plus the payload length field."""
+    if len(data) < 6 or data[0] >> 4 != 6:
+        return len(data) if data else None
+    return 40 + int.from_bytes(data[4:6], "big")
+
+
+def _ipv6_upper_protocol(data: bytes) -> int | None:
+    """Skip IPv6 extension headers and return the protocol they point to.
+
+    Some of those headers are always 8 bytes. Others say how long they are.
+    A next-header value of 59 means the packet stops at the IP header.
+    """
+    if len(data) < 40 or data[0] >> 4 != 6:
+        return None
+
+    payload_length = int.from_bytes(data[4:6], "big")
+    packet_end = min(len(data), 40 + payload_length)
+    next_header = data[6]
+    offset = 40
+
+    for _ in range(8):
+        if next_header == 59:
+            return None
+        if next_header == 44:
+            if packet_end < offset + 8:
+                return None
+            next_header = data[offset]
+            offset += 8
+            continue
+        if next_header in IPV6_VARIABLE_EXT:
+            if packet_end < offset + 2:
+                return None
+            header_len = (data[offset + 1] + 1) * 8
+            if packet_end < offset + header_len:
+                return None
+            next_header = data[offset]
+            offset += header_len
+            continue
+        if next_header == 51:
+            if packet_end < offset + 2:
+                return None
+            header_len = (data[offset + 1] + 2) * 4
+            if packet_end < offset + header_len:
+                return None
+            next_header = data[offset]
+            offset += header_len
+            continue
+        return next_header
+    return None
+
+
+def _arp_packet_size(data: bytes) -> int:
+    """How long the ARP message is, not counting Ethernet padding."""
+    if len(data) < 8:
+        return len(data)
+    hardware_len = data[4]
+    protocol_len = data[5]
+    return 8 + 2 * (hardware_len + protocol_len)
+
+
+def _bin_packet_sizes(sizes: list[int]) -> dict[int, int]:
+    """Sort lengths into groups of 250 bytes. The key is the start of the group."""
+    if not sizes:
+        return {}
+
+    lengths = np.asarray(sizes, dtype=np.int64)
+    bin_width = 250
+    # numpy counts the top edge of the last bin, so stop one bin past the biggest packet.
+    last_edge = (int(lengths.max()) // bin_width + 1) * bin_width
+    edges = np.arange(0, last_edge + 1, bin_width)
+    counts, edges = np.histogram(lengths, bins=edges)
+    return {
+        int(lower): int(count)
+        for lower, count in zip(edges[:-1], counts)
+        if count > 0
+    }
+
+
+def calculate_packet_statistics(
+    frames: list[tuple[float, bytes]],
+) -> PacketStatistics:
+    """Count each protocol and group L3 packet sizes into bins of 250 bytes.
+
+    IPv4 uses its total length. IPv6 is 40 bytes plus the payload length.
+    ARP leaves off the Ethernet padding. 802.3 frames are only counted as layer 2.
+    """
+    stats = PacketStatistics()
+    sizes: list[int] = []
+
+    for _, raw in frames:
+        try:
+            frame = ethernet_decapsulation(raw)
+        except ValueError:
+            continue
+
+        if isinstance(frame, FrameIEEE):
+            stats.ieee_802_3 += 1
+            continue
+
+        stats.ethernet_ii += 1
+        eth_type = int.from_bytes(frame.eth_type, "big")
+        eth_type, payload = _strip_vlan(eth_type, frame.data)
+
+        if eth_type == 0x0800:
+            stats.ipv4 += 1
+            try:
+                packet = packet_decapsulation(payload)
+            except ValueError:
+                if payload:
+                    sizes.append(len(payload))
+                continue
+            sizes.append(packet.total_length)
+            _count_l4(stats, packet.protocol)
+        elif eth_type == 0x86DD:
+            stats.ipv6 += 1
+            size = _ipv6_packet_size(payload)
+            if size is not None:
+                sizes.append(size)
+            protocol = _ipv6_upper_protocol(payload)
+            if protocol is not None:
+                _count_l4(stats, protocol)
+        elif eth_type == 0x0806:
+            stats.arp += 1
+            sizes.append(_arp_packet_size(payload))
+        else:
+            stats.other_l3 += 1
+            if payload:
+                sizes.append(len(payload))
+
+    stats.packet_sizes = _bin_packet_sizes(sizes)
     return stats
 
 def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> int:
@@ -469,6 +638,7 @@ def graph_packet_statistics(statistics: PacketStatistics):
         ("UDP", statistics.udp),
         ("ICMP", statistics.icmp),
         ("ICMPv6", statistics.icmpv6),
+        ("IGMP", statistics.igmp),
         ("Other", statistics.other_l4),
     ]
     size_items = [
@@ -608,11 +778,14 @@ def main(filename: str):
         )
 
     statistics = calculate_packet_statistics(frames)
-    first_10_sec_data = calculate_packets_per_second(frames)
-
+    print(f"\n{statistics}")
     graph_packet_statistics(statistics)
-    graph_packets_per_second(first_10_sec_data)
 
+    first_10_sec_data = calculate_packets_per_second(frames)
+    if first_10_sec_data is not None:
+        graph_packets_per_second(first_10_sec_data)
+
+    plt.show()
     number_converter()
 
 
