@@ -42,6 +42,13 @@ ETH_TYPES = {
     0x86DD: "IPv6",
 }
 
+VLAN_ETH_TYPES = {
+    0x8100, # 802.1Q
+    0x88A8, # 802.1ad
+    0x9100 # QinQ
+}
+IPV6_EXT_HEADERS = {0, 43, 44, 51, 60, 135}
+
 @dataclass
 class FrameII:
     dest_mac: bytes = bytes(6)       # 6 bytes
@@ -184,7 +191,7 @@ class PacketStatistics:
     packet_sizes: dict[int, int] = field(default_factory=dict)
 
     def __str__(self) -> str:
-        """Show the counts, percents, and size bins."""
+        """Return a string representation of the packet statistics."""
         total = self.ethernet_ii + self.ieee_802_3
 
         def row(label: str, count: int) -> str:
@@ -217,8 +224,20 @@ class PacketStatistics:
             f"{row('IGMP', self.igmp)}\n"
             f"{row('Other', self.other_l4)}\n"
             f"\tL3 Packet Sizes (250-byte bins):\n"
-            f"{size_lines}\n"
-            f"\tPackets Per Second (first 10 seconds):\n"
+            f"{size_lines}"
+        )
+
+@dataclass
+class PacketRateStatistics:
+    """Store packets-per-second data for the first 10 seconds."""
+    bin_edges: list[float]
+    rates: list[int]
+
+    def __str__(self) -> str:
+        """Return a string representation of the packets-per-second statistics."""
+        return "Packets Per Second (first 10 seconds):\n" + "\n".join(
+            f"\t{self.bin_edges[i]}-{self.bin_edges[i + 1]} sec: {self.rates[i]}"
+            for i in range(len(self.rates))
         )
 
 def parse(filename: str) -> list[tuple[float, bytes]]:
@@ -374,28 +393,24 @@ def segment_decapsulation(packet: Packet) -> Segment:
 
 def ones_complement_sum(data: bytes) -> int:
     """Return the 16-bit one's complement sum of data (RFC 1071)."""
-    total = 0
-    even_length = len(data) - len(data) % 2
+    if len(data) % 2:
+        data += b"\x00"
 
-    # Adjacent octets form 16-bit words in network byte order.
-    for index in range(0, even_length, 2):
+    total = 0
+    for index in range(0, len(data), 2):
         total += int.from_bytes(data[index:index + 2], "big")
 
-    # A trailing odd octet is padded on the right with zeros.
-    if len(data) % 2 == 1:
-        total += data[-1] << 8
-
-    # End-around carry folds any overflow back into 16 bits.
+    # Add any carry bits back into the low 16 bits
     while total >> 16:
         total = (total & 0xFFFF) + (total >> 16)
 
-    return ~total
+    return total
 
 
 def calculate_ip_checksum(packet: Packet) -> int:
     """Return the IPv4 header checksum (RFC 791)."""
     
-    # RFC 791: the checksum field is zero while the header is summed.
+    # Rebuild the header with the checksum field zeroed
     flags_and_offset = (packet.flags << 13) | packet.fragment_offset
     header = (
         bytes([(packet.version << 4) | packet.ihl, packet.tos])
@@ -407,12 +422,12 @@ def calculate_ip_checksum(packet: Packet) -> int:
         + packet.dest_ip
         + packet.options
     )
-    return (ones_complement_sum(header)) & 0xFFFF
+    return ~ones_complement_sum(header) & 0xFFFF
 
 
 def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     """Return the TCP checksum over the pseudo-header and segment (RFC 9293)."""
-    # RFC 9293: the checksum field is zero while the segment is summed.
+    # Rebuild the TCP header with the checksum field zeroed
     offset_and_reserved = (segment.data_offset << 4) | segment.reserved
     tcp_header = (
         segment.source_port.to_bytes(2, "big")
@@ -427,32 +442,24 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
     )
     segment_bytes = tcp_header + segment.data
 
-    # The pseudo-header is conceptually prefixed to the segment. TCP length is the header plus data, and does not include the pseudo-header.
     pseudo_header = (
         packet.source_ip
         + packet.dest_ip
         + bytes([0, packet.protocol])
         + len(segment_bytes).to_bytes(2, "big")
     )
-    return (ones_complement_sum(pseudo_header + segment_bytes)) & 0xFFFF
+    return ~ones_complement_sum(pseudo_header + segment_bytes) & 0xFFFF
 
-# VLAN tags. The real EtherType sits behind the tag.
-VLAN_ETHERTYPES = {0x8100, 0x88A8, 0x9100}
-
-# IPv6 extension headers that store their length in the next byte.
-IPV6_VARIABLE_EXT = {0, 43, 60, 135}
-
-
-def _strip_vlan(eth_type: int, data: bytes) -> tuple[int, bytes]:
-    """Skip VLAN tags and return the protocol and payload underneath."""
-    while eth_type in VLAN_ETHERTYPES and len(data) >= 4:
+def strip_vlan(eth_type: int, data: bytes) -> tuple[int, bytes]:
+    """Skip any VLAN tags and return the inner EtherType and payload."""
+    while eth_type in VLAN_ETH_TYPES and len(data) >= 4:
         eth_type = int.from_bytes(data[2:4], "big")
         data = data[4:]
     return eth_type, data
 
 
-def _count_l4(stats: PacketStatistics, protocol: int) -> None:
-    """Add one to the Layer 4 counter for this protocol number."""
+def count_l4_protocol(stats: PacketStatistics, protocol: int) -> None:
+    """Increment the Layer 4 counter for an IP protocol number."""
     if protocol == 6:
         stats.tcp += 1
     elif protocol == 17:
@@ -467,93 +474,61 @@ def _count_l4(stats: PacketStatistics, protocol: int) -> None:
         stats.other_l4 += 1
 
 
-def _ipv6_packet_size(data: bytes) -> int | None:
-    """IPv6 length is the 40-byte header plus the payload length field."""
+def ipv6_packet_size(data: bytes) -> int | None:
+    """Return the IPv6 packet length (40-byte header plus payload length)."""
     if len(data) < 6 or data[0] >> 4 != 6:
         return len(data) if data else None
     return 40 + int.from_bytes(data[4:6], "big")
 
 
-def _ipv6_upper_protocol(data: bytes) -> int | None:
-    """Skip IPv6 extension headers and return the protocol they point to.
-
-    Some of those headers are always 8 bytes. Others say how long they are.
-    A next-header value of 59 means the packet stops at the IP header.
-    """
+def ipv6_upper_protocol(data: bytes) -> int | None:
+    """Skip IPv6 extension headers and return the upper-layer protocol (RFC 8200)."""
     if len(data) < 40 or data[0] >> 4 != 6:
         return None
 
-    payload_length = int.from_bytes(data[4:6], "big")
-    packet_end = min(len(data), 40 + payload_length)
+    packet_end = min(len(data), 40 + int.from_bytes(data[4:6], "big"))
     next_header = data[6]
     offset = 40
 
-    for _ in range(8):
-        if next_header == 59:
+    while next_header in IPV6_EXT_HEADERS:
+        if packet_end < offset + 8:
             return None
+
+        # Fragment headers are always 8 bytes, AH counts 4-byte words, the rest count 8-byte words
         if next_header == 44:
-            if packet_end < offset + 8:
-                return None
-            next_header = data[offset]
-            offset += 8
-            continue
-        if next_header in IPV6_VARIABLE_EXT:
-            if packet_end < offset + 2:
-                return None
-            header_len = (data[offset + 1] + 1) * 8
-            if packet_end < offset + header_len:
-                return None
-            next_header = data[offset]
-            offset += header_len
-            continue
-        if next_header == 51:
-            if packet_end < offset + 2:
-                return None
-            header_len = (data[offset + 1] + 2) * 4
-            if packet_end < offset + header_len:
-                return None
-            next_header = data[offset]
-            offset += header_len
-            continue
-        return next_header
-    return None
+            header_length = 8
+        elif next_header == 51:
+            header_length = (data[offset + 1] + 2) * 4
+        else:
+            header_length = (data[offset + 1] + 1) * 8
+
+        if packet_end < offset + header_length:
+            return None
+        next_header = data[offset]
+        offset += header_length
+
+    # 59 means there is no upper-layer header
+    return None if next_header == 59 else next_header
 
 
-def _arp_packet_size(data: bytes) -> int:
-    """How long the ARP message is, not counting Ethernet padding."""
+def arp_packet_size(data: bytes) -> int:
+    """Return the ARP message length without Ethernet padding."""
     if len(data) < 8:
         return len(data)
-    hardware_len = data[4]
-    protocol_len = data[5]
-    return 8 + 2 * (hardware_len + protocol_len)
+    return 8 + 2 * (data[4] + data[5])
 
 
-def _bin_packet_sizes(sizes: list[int]) -> dict[int, int]:
-    """Sort lengths into groups of 250 bytes. The key is the start of the group."""
-    if not sizes:
-        return {}
-
-    lengths = np.asarray(sizes, dtype=np.int64)
-    bin_width = 250
-    # numpy counts the top edge of the last bin, so stop one bin past the biggest packet.
-    last_edge = (int(lengths.max()) // bin_width + 1) * bin_width
-    edges = np.arange(0, last_edge + 1, bin_width)
-    counts, edges = np.histogram(lengths, bins=edges)
-    return {
-        int(lower): int(count)
-        for lower, count in zip(edges[:-1], counts)
-        if count > 0
-    }
+def bin_packet_sizes(sizes: list[int]) -> dict[int, int]:
+    """Count packet sizes in 250-byte bins, using each bin's lower bound as the key."""
+    bins = {}
+    for size in sizes:
+        lower = size - size % 250
+        bins[lower] = bins.get(lower, 0) + 1
+    return bins
 
 
-def calculate_packet_statistics(
-    frames: list[tuple[float, bytes]],
-) -> PacketStatistics:
-    """Count each protocol and group L3 packet sizes into bins of 250 bytes.
-
-    IPv4 uses its total length. IPv6 is 40 bytes plus the payload length.
-    ARP leaves off the Ethernet padding. 802.3 frames are only counted as layer 2.
-    """
+def calculate_packet_statistics(frames: list[tuple[float, bytes]]) -> PacketStatistics:
+    """Count frames per protocol and bin the L3 packet sizes."""
     stats = PacketStatistics()
     sizes: list[int] = []
 
@@ -563,13 +538,14 @@ def calculate_packet_statistics(
         except ValueError:
             continue
 
+        # IEEE 802.3 frames are only counted at Layer 2
         if isinstance(frame, FrameIEEE):
             stats.ieee_802_3 += 1
             continue
 
         stats.ethernet_ii += 1
         eth_type = int.from_bytes(frame.eth_type, "big")
-        eth_type, payload = _strip_vlan(eth_type, frame.data)
+        eth_type, payload = strip_vlan(eth_type, frame.data)
 
         if eth_type == 0x0800:
             stats.ipv4 += 1
@@ -580,31 +556,44 @@ def calculate_packet_statistics(
                     sizes.append(len(payload))
                 continue
             sizes.append(packet.total_length)
-            _count_l4(stats, packet.protocol)
+            count_l4_protocol(stats, packet.protocol)
         elif eth_type == 0x86DD:
             stats.ipv6 += 1
-            size = _ipv6_packet_size(payload)
+            size = ipv6_packet_size(payload)
             if size is not None:
                 sizes.append(size)
-            protocol = _ipv6_upper_protocol(payload)
+            protocol = ipv6_upper_protocol(payload)
             if protocol is not None:
-                _count_l4(stats, protocol)
+                count_l4_protocol(stats, protocol)
         elif eth_type == 0x0806:
             stats.arp += 1
-            sizes.append(_arp_packet_size(payload))
+            sizes.append(arp_packet_size(payload))
         else:
             stats.other_l3 += 1
             if payload:
                 sizes.append(len(payload))
 
-    stats.packet_sizes = _bin_packet_sizes(sizes)
+    stats.packet_sizes = bin_packet_sizes(sizes)
     return stats
 
-def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> int:
-    """TODO: The packets present in the first 10 second of the capture need to be collected.
-            From there the packets/second needs to be calculated and put in a structure for graphing."""
+def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> PacketRateStatistics | None:
+    """Count and return the number of packets received in each second of the first 10 seconds."""
 
-    return
+    bins = [0] * 10
+
+    if not frames:
+        return None
+
+    first_timestamp = frames[0][0]
+    for (timestamp, _) in frames:
+        seconds_since_start = timestamp - first_timestamp
+        if 0 <= seconds_since_start < 10:
+            bins[int(seconds_since_start)] += 1
+
+    return PacketRateStatistics(
+        bin_edges=list(range(11)),
+        rates=bins,
+    )
 
 def graph_packet_statistics(statistics: PacketStatistics):
     """Display the protocol and packet-size statistics as bar graphs."""
@@ -654,17 +643,17 @@ def graph_packet_statistics(statistics: PacketStatistics):
     fig.tight_layout()
     return fig
 
-def graph_packets_per_second(packets_per_sec: list[bytes]):
+def graph_packets_per_second(statistics: PacketRateStatistics):
     """Plot packets per second over the capture's first ten seconds."""
-    x = packets_per_sec.bin_edges[:-1]
-    y = packets_per_sec.rates
+    x = statistics.bin_edges[:-1]
+    y = statistics.rates
     fig, ax = plt.subplots(figsize=(9, 4.5))
     ax.plot(x, y, color="black", linewidth=0.7)
     ax.set_title("Packets/sec — First 10 Seconds of Capture")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Packets/1 sec")
     ax.grid(True, linestyle=":", linewidth=0.5, color="gray", alpha=0.6)
-    ax.set_xlim(x.min(), x.max())
+    ax.set_xlim(min(x), max(x))
     ax.set_ylim(bottom=0)
     fig.tight_layout()
 
@@ -717,6 +706,10 @@ def number_converter():
 
 
 def main(filename: str):
+    if filename.lower() == "convert":
+        number_converter()
+        return
+
     frames = parse(filename)
     if not frames:
         print("No packets found.")
@@ -747,7 +740,7 @@ def main(filename: str):
             print(f"\t{e}")
             continue
 
-        # Compare the header checksum with the value computed from the header
+        # Verify the IPv4 header checksum
         received_ip = int.from_bytes(packet.header_checksum, "big")
         calculated_ip = calculate_ip_checksum(packet)
         ip_result = "valid" if received_ip == calculated_ip else "invalid"
@@ -768,7 +761,7 @@ def main(filename: str):
             print(f"\t{e}")
             continue
 
-        # Compare the TCP checksum with the value computed over the pseudo-header and segment
+        # Verify the TCP checksum
         received_tcp = int.from_bytes(segment.checksum, "big")
         calculated_tcp = calculate_tcp_checksum(packet, segment)
         tcp_result = "valid" if received_tcp == calculated_tcp else "invalid"
@@ -783,10 +776,10 @@ def main(filename: str):
 
     first_10_sec_data = calculate_packets_per_second(frames)
     if first_10_sec_data is not None:
+        print(f"\n{first_10_sec_data}")
         graph_packets_per_second(first_10_sec_data)
 
     plt.show()
-    number_converter()
 
 
 if __name__ == "__main__":
