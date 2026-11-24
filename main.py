@@ -22,8 +22,8 @@ Sources:
 
 import sys
 from dataclasses import dataclass, field
-import numpy as np
 import matplotlib.pyplot as plt
+
 
 def print_mac(mac: bytes) -> str:
     """Format a MAC address from raw bytes to hexadecimal representation."""
@@ -43,14 +43,17 @@ ETH_TYPES = {
 }
 
 VLAN_ETH_TYPES = {
-    0x8100, # 802.1Q
-    0x88A8, # 802.1ad
-    0x9100 # QinQ
+    0x8100,  # 802.1Q
+    0x88A8,  # 802.1ad
+    0x9100  # QinQ
 }
 IPV6_EXT_HEADERS = {0, 43, 44, 51, 60, 135}
 
+
 @dataclass
 class FrameII:
+    """Ethernet II frame: header fields plus payload."""
+
     dest_mac: bytes = bytes(6)       # 6 bytes
     source_mac: bytes = bytes(6)     # 6 bytes
     eth_type: bytes = bytes(2)       # 2 bytes
@@ -63,11 +66,13 @@ class FrameII:
             f"Ethernet II: Dst: {print_mac(self.dest_mac)}, "
             f"Src: {print_mac(self.source_mac)}, "
             f"Type: {ETH_TYPES.get(eth_type, 'Unknown')} (0x{eth_type:04x})"
-            #f"Type: {ETH_TYPES.get(eth_type, "Unknown")} (0x{eth_type:04x})"
         )
+
 
 @dataclass
 class FrameIEEE:
+    """IEEE 802.3 frame: header fields, LLC header, and payload."""
+
     dest_mac: bytes = bytes(6)       # 6 bytes
     source_mac: bytes = bytes(6)     # 6 bytes
     length: int = 0                  # 2 bytes
@@ -82,8 +87,11 @@ class FrameIEEE:
             f"Length: {self.length} bytes"
         )
 
+
 @dataclass
 class Packet:
+    """IPv4 packet header fields (RFC 791) plus payload."""
+
     version: int = 0                    # 4 bits
     ihl: int = 0                        # 4 bits
     tos: int = 0                        # 8 bits
@@ -122,8 +130,11 @@ class Packet:
             f"\t\tOptions: {len(self.options)} bytes"
         )
 
+
 @dataclass
 class Segment:
+    """TCP segment header fields (RFC 9293) plus payload."""
+
     source_port: int = 0         # 16 bits
     dest_port: int = 0           # 16 bits
     sequence_number: int = 0     # 32 bits
@@ -139,7 +150,7 @@ class Segment:
 
     def __str__(self) -> str:
         """Return a string representation of the TCP segment."""
-        
+
         flag_names = [
             name for bit, name in (
                 (0x80, "CWR"), (0x40, "ECE"), (0x20, "URG"), (0x10, "ACK"),
@@ -163,6 +174,7 @@ class Segment:
             f"\t\tPayload: {len(self.data)} bytes"
         )
 
+
 @dataclass
 class PacketStatistics:
     """Store Part 2 protocol counts, L3 sizes, and capture rates."""
@@ -177,7 +189,7 @@ class PacketStatistics:
     arp: int = 0
     other_l3: int = 0
 
-    # Layer 4 
+    # Layer 4
     tcp: int = 0
     udp: int = 0
     icmp: int = 0
@@ -185,7 +197,7 @@ class PacketStatistics:
     igmp: int = 0
     other_l4: int = 0
 
-    # Keys are the lower bounds of 250-byte L3 packet-size bins 
+    # Keys are the lower bounds of 250-byte L3 packet-size bins
     # ie. 0 represents 0-249 bytes, 250 represents 250-499.
     # Values are the number of frames in that bin
     packet_sizes: dict[int, int] = field(default_factory=dict)
@@ -195,6 +207,7 @@ class PacketStatistics:
         total = self.ethernet_ii + self.ieee_802_3
 
         def row(label: str, count: int) -> str:
+            """Format one protocol count with its percentage of all frames."""
             percent = (100 * count / total) if total else 0
             return f"\t\t{label}: {count} ({percent:.1f}%)"
 
@@ -227,6 +240,7 @@ class PacketStatistics:
             f"{size_lines}"
         )
 
+
 @dataclass
 class PacketRateStatistics:
     """Store packets-per-second data for the first 10 seconds."""
@@ -239,6 +253,7 @@ class PacketRateStatistics:
             f"\t{self.bin_edges[i]}-{self.bin_edges[i + 1]} sec: {self.rates[i]}"
             for i in range(len(self.rates))
         )
+
 
 def parse(filename: str) -> list[tuple[float, bytes]]:
     """Read a text file containing hex-encoded Ethernet frames."""
@@ -295,7 +310,7 @@ def ethernet_decapsulation(frame: bytes) -> FrameII | FrameIEEE:
         source_mac=frame[6:12],
         eth_type=frame[12:14],
         data=frame[14:]
-    ) 
+    )
 
 
 def packet_decapsulation(data: bytes) -> Packet:
@@ -340,10 +355,10 @@ def packet_decapsulation(data: bytes) -> Packet:
         data=data[header_length:total_length],
     )
 
+
 def segment_decapsulation(packet: Packet) -> Segment:
     """Process an IPv4 packet and extract the TCP segment header and data.
     TCP header layout follows RFC 9293 Section 3.1. """
-
 
     if packet.fragment_offset != 0:
         raise ValueError("Cannot parse TCP header from a non-initial IPv4 fragment.")
@@ -353,7 +368,7 @@ def segment_decapsulation(packet: Packet) -> Segment:
     # RFC 9293 Section 3.1: The minimum TCP header is 20 bytes
     if len(data) < 20:
         raise ValueError("Packet is too short to hold a TCP header.")
-    
+
     # RFC 9293 Section 3.1:
     # Byte 12 contains two 4-bit fields: upper 4 bits = Data Offset lower 4 bits = Reserved
     # Shifting right by 4 removes the Reserved bits and leaves Data Offset.
@@ -371,7 +386,8 @@ def segment_decapsulation(packet: Packet) -> Segment:
         )
 
     return Segment(
-        # RFC 9293 Section 3.1: Source Port and Destination Port are each 16-bit fields. TCP uses network byte order, so multi-byte values are read big-endian.
+        # RFC 9293 Section 3.1: Source Port and Destination Port are each 16-bit fields.
+        # TCP uses network byte order, so multi-byte values are read big-endian.
         source_port=int.from_bytes(data[0:2], "big"),
         dest_port=int.from_bytes(data[2:4], "big"),
         # RFC 9293: Sequence Number and Acknowledgment Number are each 32 bits.
@@ -379,13 +395,15 @@ def segment_decapsulation(packet: Packet) -> Segment:
         ack_number=int.from_bytes(data[8:12], "big"),
         data_offset=data_offset,
         reserved=data[12] & 0x0F,  # 0x0F = binary 00001111 ANDing with 0x0F preserves only the lower 4 Reserved bits.
-        flags=data[13], # RFC 9293: The next 8 bits are the TCP control bits (flags), Keeping the whole byte preserves all eight flags.
+        # RFC 9293: The next 8 bits are the TCP control bits (flags), Keeping the whole byte preserves all eight flags.
+        flags=data[13],
         # RFC 9293: Window, checksum, and urgent pointer all 16-bit fields.
-        window_size=int.from_bytes(data[14:16], "big"), 
+        window_size=int.from_bytes(data[14:16], "big"),
         checksum=data[16:18],
         urgent_pointer=int.from_bytes(data[18:20], "big"),
-         # RFC 9293: Options begin after the fixed 20-byte header and continue until the location specified by Data Offset.
-         # Gives the option size as: (Data Offset - 5) * 32 bits
+        # RFC 9293: Options begin after the fixed 20-byte header and continue
+        # until the location specified by Data Offset.
+        # Gives the option size as: (Data Offset - 5) * 32 bits
         optional_data=data[20:header_length],
         data=data[header_length:]
     )
@@ -409,7 +427,7 @@ def ones_complement_sum(data: bytes) -> int:
 
 def calculate_ip_checksum(packet: Packet) -> int:
     """Return the IPv4 header checksum (RFC 791)."""
-    
+
     # Rebuild the header with the checksum field zeroed
     flags_and_offset = (packet.flags << 13) | packet.fragment_offset
     header = (
@@ -449,6 +467,7 @@ def calculate_tcp_checksum(packet: Packet, segment: Segment) -> int:
         + len(segment_bytes).to_bytes(2, "big")
     )
     return ~ones_complement_sum(pseudo_header + segment_bytes) & 0xFFFF
+
 
 def strip_vlan(eth_type: int, data: bytes) -> tuple[int, bytes]:
     """Skip any VLAN tags and return the inner EtherType and payload."""
@@ -576,6 +595,7 @@ def calculate_packet_statistics(frames: list[tuple[float, bytes]]) -> PacketStat
     stats.packet_sizes = bin_packet_sizes(sizes)
     return stats
 
+
 def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> PacketRateStatistics | None:
     """Count and return the number of packets received in each second of the first 10 seconds."""
 
@@ -595,11 +615,13 @@ def calculate_packets_per_second(frames: list[tuple[float, bytes]]) -> PacketRat
         rates=bins,
     )
 
+
 def graph_packet_statistics(statistics: PacketStatistics):
     """Display the protocol and packet-size statistics as bar graphs."""
     fig, axes = plt.subplots(2, 2, figsize=(11, 8))
 
     def _bar(ax, items: list[tuple[str, int]], title: str, xlabel: str):
+        """Draw a bar chart of the non-zero items on the given axes."""
         items = [(label, count) for label, count in items if count > 0]
         if not items:
             ax.set_title(f"{title} (no data)")
@@ -643,6 +665,7 @@ def graph_packet_statistics(statistics: PacketStatistics):
     fig.tight_layout()
     return fig
 
+
 def graph_packets_per_second(statistics: PacketRateStatistics):
     """Plot packets per second over the capture's first ten seconds."""
     x = statistics.bin_edges[:-1]
@@ -659,6 +682,7 @@ def graph_packets_per_second(statistics: PacketRateStatistics):
 
     return fig
 
+
 def number_converter():
     """Repeatedly convert unsigned 16-bit binary, hexadecimal, or decimal input."""
     print("\nNumber Converter (0 to 65535 / Max 16 bits)")
@@ -666,7 +690,7 @@ def number_converter():
 
     bases = {"b": (2, "Binary"), "h": (16, "Hexadecimal"),
              "d": (10, "Decimal")}
-   
+
     while True:
         try:
             choice = input("\nInput base (b/h/d/q): ").strip().lower()
@@ -678,15 +702,15 @@ def number_converter():
             break
         if choice not in bases:
             print("Invalid choice. Enter b, h, d, or q.")
-            continue   
+            continue
 
         base, name = bases[choice]
         try:
             number_text = input("\nEnter number (q to quit): ").strip()
         except (EOFError, KeyboardInterrupt):
-                    print("\nExiting number converter.")
-                    break
-        
+            print("\nExiting number converter.")
+            break
+
         try:
             number = int(number_text, base)
         except ValueError:
@@ -706,6 +730,7 @@ def number_converter():
 
 
 def main(filename: str):
+    """Parse the capture, print each frame's headers and checksums, then show statistics."""
     if filename.lower() == "convert":
         number_converter()
         return
@@ -785,6 +810,7 @@ def main(filename: str):
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print("Usage: python main.py <input_filename>")
+        print("       python main.py convert   (16-bit number converter)")
         sys.exit(1)
 
     main(sys.argv[1])
